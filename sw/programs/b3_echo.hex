@@ -1,0 +1,8 @@
+# B.3  Echo the keyboard to the terminal (ISA manual, Appendix B). Never halts.
+14 01   # 00       LDI  B, #1
+20 F3   # 02 wait: LD   A, [TTY_STATUS]
+91 00   # 04       AND  A, B
+E4 02   # 06       JZ   wait
+20 F4   # 08       LD   A, [TTY_IN]
+30 F2   # 0A       ST   A, [TTY_OUT]
+E0 02   # 0C       JMP  wait

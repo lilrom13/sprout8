@@ -1,0 +1,10 @@
+# Keeps the action versions in .github/workflows current (weekly PRs).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

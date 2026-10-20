@@ -1,0 +1,9 @@
+# B.1  Sum 5 + 4 + 3 + 2 + 1 to the LEDs (ISA manual, Appendix B)
+# expect: LEDS = 0x0F, 96 cycles
+10 00   # 00      LDI  A, #0
+14 05   # 02      LDI  B, #5
+71 00   # 04 loop: ADD A, B
+D5 00   # 06      DEC  B
+E8 04   # 08      JNZ  loop
+30 F0   # 0A      ST   A, [LEDS]
+01 00   # 0C      HLT

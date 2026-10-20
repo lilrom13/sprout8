@@ -1,0 +1,109 @@
+# CI: runs on every push to main and every pull request.
+#   lint     GHDL strict compile, emulator unit tests, workflow lint
+#   test     all testbenches on the pinned GHDL (blocking) and the latest GHDL (advisory),
+#            mutation check, HTML/Markdown report, JUnit XML, waveforms of failures
+#   publish  on main: deploys the latest report to GitHub Pages
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GHDL_VERSION: v5.1.1        # pinned simulator for the blocking checks; bump deliberately
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ghdl/setup-ghdl@v1
+        with:
+          version: ${{ env.GHDL_VERSION }}
+          backend: mcode
+
+      - name: VHDL strict compile (warnings are errors)
+        run: make lint
+
+      - name: Emulator unit tests
+        run: make emu-test
+
+      - name: Lint GitHub workflows
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+
+  test:
+    name: Testbenches (GHDL ${{ matrix.ghdl }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: ${{ !matrix.primary }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ghdl: v5.1.1          # keep equal to env.GHDL_VERSION
+            primary: true
+          - ghdl: latest          # early warning when a new GHDL release changes behaviour
+            primary: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ghdl/setup-ghdl@v1
+        with:
+          version: ${{ matrix.ghdl }}
+          backend: mcode
+
+      - name: Run testbenches
+        run: python3 tools/run_tests.py --out build/report
+
+      - name: Mutation check (do the tests catch planted bugs?)
+        if: matrix.primary
+        run: python3 tools/mutation_check.py --out build/report
+
+      - name: Build report
+        if: always()
+        run: python3 tools/report.py build/report --step-summary
+
+      - name: Upload report, logs and waveforms
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-report-ghdl-${{ matrix.ghdl }}
+          path: build/report
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload report for GitHub Pages
+        if: always() && matrix.primary && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: build/report
+
+  publish:
+    name: Publish report
+    needs: test
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test.result != 'cancelled'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

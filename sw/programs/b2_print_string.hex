@@ -1,0 +1,15 @@
+# B.2  Print a string with a pointer and a subroutine (ISA manual, Appendix B)
+# expect: terminal "HI!", 172 cycles, SP = 0xF0
+1C 20   # 00       LDI  D, #msg
+14 00   # 02       LDI  B, #0
+43 00   # 04 next: LDR  A, [D]
+C1 00   # 06       CMP  A, B
+E4 10   # 08       JE   done
+F2 12   # 0A       CALL putc
+DC 00   # 0C       INC  D
+E0 04   # 0E       JMP  next
+01 00   # 10 done: HLT
+30 F2   # 12 putc: ST   A, [TTY_OUT]
+02 00   # 14       RET
+@20
+48 49 21 00   # msg: .asciz "HI!"

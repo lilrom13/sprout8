@@ -1,0 +1,61 @@
+# Release: pushing a tag such as v1.0.0 runs the full verification (nightly profile plus
+# the mutation check) and, only if everything passes, publishes a GitHub Release with
+# the source bundle and the test report attached.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Verify and release ${{ github.ref_name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ghdl/setup-ghdl@v1
+        with:
+          version: v5.1.1
+          backend: mcode
+
+      - name: Lint
+        run: make lint emu-test
+
+      - name: Full verification
+        run: |
+          python3 tools/run_tests.py --profile nightly --out build/report
+          python3 tools/mutation_check.py --out build/report
+          python3 tools/report.py build/report --step-summary
+
+      - name: Package
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          mkdir -p dist
+          git archive --format=zip --prefix="sprout8-${VERSION}/" -o "dist/sprout8-${VERSION}-source.zip" HEAD
+          (cd build && zip -qr "../dist/sprout8-${VERSION}-test-report.zip" report)
+          python3 tools/release_notes.py "$VERSION" build/report > dist/notes.md
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          prerelease=""
+          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$VERSION" dist/*.zip --verify-tag $prerelease \
+            --title "Sprout-8 $VERSION" --notes-file dist/notes.md
+
+      - name: Upload release bundle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ github.ref_name }}
+          path: |
+            dist
+            build/report

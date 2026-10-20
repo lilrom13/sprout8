@@ -1,0 +1,35 @@
+name: ISA change proposal
+description: Propose a change or clarification to the Sprout-8 Instruction Set Manual
+labels: [spec]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Version 1.0 encodings are frozen once released. New instructions may only use
+        encodings the manual marks as reserved (section 5.3).
+  - type: input
+    id: section
+    attributes:
+      label: Manual section(s)
+      placeholder: e.g. 6.2 CMP, Appendix C
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options: [Clarification (no behaviour change), Behaviour change, New instruction / extension]
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should change, and why it helps students
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: How would we test it?
+      description: New conformance tests (Appendix C) or testbench checks

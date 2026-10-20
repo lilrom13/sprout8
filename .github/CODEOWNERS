@@ -1,0 +1,5 @@
+# Replace @OWNER with your GitHub user or team. Owners are requested for review automatically.
+*                 @OWNER
+/docs/spec/       @OWNER
+/hw/tb/           @OWNER
+/.github/         @OWNER

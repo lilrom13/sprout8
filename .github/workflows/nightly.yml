@@ -1,0 +1,85 @@
+# Nightly: long random lockstep stress with a new seed every night, on the pinned GHDL
+# and on GHDL nightly. A failing scheduled run opens (or updates) an issue with the
+# seed needed to reproduce it locally:  make nightly SEED=<seed>
+name: Nightly stress
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "tb_cpu random seed (empty = run number)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  stress:
+    name: Stress (GHDL ${{ matrix.ghdl }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        ghdl: [v5.1.1, nightly]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ghdl/setup-ghdl@v1
+        with:
+          version: ${{ matrix.ghdl }}
+          backend: mcode
+
+      - name: Pick the random seed
+        id: seed
+        env:
+          INPUT_SEED: ${{ inputs.seed }}
+        run: echo "seed=${INPUT_SEED:-$GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Run testbenches (nightly profile)
+        env:
+          SEED: ${{ steps.seed.outputs.seed }}
+        run: python3 tools/run_tests.py --profile nightly -g "tb_cpu.RAND_SEED=${SEED}" --out build/report
+
+      - name: Mutation check
+        if: matrix.ghdl == 'v5.1.1'
+        run: python3 tools/mutation_check.py --out build/report
+
+      - name: Build report
+        if: always()
+        run: python3 tools/report.py build/report --step-summary
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-report-ghdl-${{ matrix.ghdl }}-seed-${{ steps.seed.outputs.seed }}
+          path: build/report
+          retention-days: 14
+
+      - name: Open or update an issue
+        if: failure() && github.event_name == 'schedule' && matrix.ghdl == 'v5.1.1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SEED: ${{ steps.seed.outputs.seed }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Nightly stress failure"
+          body="$(printf 'Nightly run failed with seed **%s**.\n\nReproduce locally:\n\n    make nightly SEED=%s\n\nRun: %s\n\n%s' \
+                  "$SEED" "$SEED" "$RUN_URL" "$(cat build/report/summary.md 2>/dev/null)")"
+          existing="$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body" --label nightly || gh issue create --title "$title" --body "$body"
+          fi

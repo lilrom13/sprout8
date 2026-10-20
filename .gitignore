@@ -1,0 +1,13 @@
+build/
+dist/
+work/
+logs/
+*.cf
+*.ghw
+*.vcd
+*.fst
+*.o
+*.exe
+__pycache__/
+*.pyc
+.DS_Store
