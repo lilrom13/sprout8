@@ -63,5 +63,5 @@ Each line is the state **after** the instruction at the address on the left. In 
 | --- | --- |
 | `make logisim` | Program images and test vectors in `build/logisim/` |
 | `python3 tools/hex2logisim.py <prog.hex>` | One RAM image (`v3.0 hex words addressed`) |
-| `python3 tools/gen_logisim_vectors.py [--exhaustive]` | Test vectors for the combinational modules |
+| `python3 tools/gen_logisim_vectors.py [module] [--exhaustive]` | Test vectors: `alu` (combinational), `pc` (sequential) |
 | `python3 sw/emulator/sprout8.py <prog.hex> --trace` | The expected state after every instruction |

@@ -139,9 +139,33 @@ The control unit forces the whole control word to zero while halted, so `inc` = 
 | Every instruction is fetched twice | The control unit increments in T0/T2 instead of T1/T3 |
 | PC jumps when it should increment | Using the Counter component with load and count both active |
 
+## Testing it
+
+```sh
+make logisim     # writes build/logisim/vectors/pc.txt
+```
+
+Open the `pc` circuit, **Simulate → Test Vector**, load `pc.txt`, and run. All 1,042 rows must pass. Headless:
+
+```sh
+java -jar logisim-evolution.jar --test-vector pc build/logisim/vectors/pc.txt hw/logisim/sprout8.circ
+```
+
+This is a **sequential** test: the PC keeps its value from one row to the next, and the file drives the `clk` pin itself. Every clock cycle is two rows:
+
+```
+<set> <seq> clk rst inc load d[8] q[8]
+1     7     0   0   1   0    0x00 0x00     <- inputs applied, clock low: q must not change yet
+1     8     1   0   1   0    0x00 0x01     <- rising edge: q has incremented
+```
+
+For this to work, the clock of your `pc` subcircuit must be an **input pin labelled `clk`**, not a Clock component, and the pins must be labelled `rst`, `inc`, `load`, `d`, `q`. Sequential test vectors (the `<set>` and `<seq>` columns) are a recent Logisim-evolution feature: if your version reports a pin named `<set>` as missing, update Logisim or use the manual checklist below.
+
+A failing row tells you the cycle. Look at the comment lines above it in `pc.txt` (`# load beats inc`, `# 256 increments …`) to see which rule broke.
+
 ## Checklist (`tb_pc`)
 
-Poke the inputs and tick the clock (Ctrl-T) by hand:
+The vector file automates these checks. To do them by hand, poke the inputs and tick the clock (Ctrl-T):
 
 - [ ] `rst` = 1 with `load` = 1, `inc` = 1, `d` = 0xAA → `q` = 0x00 (reset beats everything).
 - [ ] All inputs 0, two ticks → `q` unchanged.
