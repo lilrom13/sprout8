@@ -48,8 +48,9 @@ workflow reruns the full verification and publishes the release only if it passe
 
 ## Repository settings (one-time, by a maintainer)
 
-- **Pages:** Settings → Pages → Source: *GitHub Actions*.
+- **Pages:** Settings → Pages → Source: *GitHub Actions*, then set the repository variable
+  `PAGES_ENABLED` to `true` (Settings → Secrets and variables → Actions → Variables).
+  Without it CI skips publishing the report (Pages needs a public repo or a paid plan).
 - **Branch protection on `main`:** require a pull request and the status checks
   `Lint` and `Testbenches (GHDL v5.1.1)`.
-- **CODEOWNERS:** replace `@OWNER` in `.github/CODEOWNERS`.
 - Optionally create a `nightly` label for the nightly failure issues.

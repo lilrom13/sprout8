@@ -6,9 +6,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/OWNER/REPO/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://OWNER.github.io/REPO/"><img alt="Testbenches" src="https://img.shields.io/endpoint?url=https%3A%2F%2FOWNER.github.io%2FREPO%2Fbadge.json"></a>
-  <a href="https://github.com/OWNER/REPO/actions/workflows/nightly.yml"><img alt="Nightly" src="https://github.com/OWNER/REPO/actions/workflows/nightly.yml/badge.svg"></a>
+  <a href="https://github.com/lilrom13/sprout8/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/lilrom13/sprout8/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://lilrom13.github.io/sprout8/"><img alt="Testbenches" src="https://img.shields.io/endpoint?url=https%3A%2F%2Flilrom13.github.io%2Fsprout8%2Fbadge.json"></a>
+  <a href="https://github.com/lilrom13/sprout8/actions/workflows/nightly.yml"><img alt="Nightly" src="https://github.com/lilrom13/sprout8/actions/workflows/nightly.yml/badge.svg"></a>
 </p>
 
 Sprout-8 is a small 8-bit CPU designed for teaching: four registers, a 256-byte address
@@ -17,7 +17,7 @@ ISA manual, a reference VHDL implementation, self-checking testbenches for every
 Python emulator and the CI that ties them together.
 
 - **Spec:** [The Sprout-8 Instruction Set Manual](docs/spec/sprout8-isa-manual.md)
-- **Latest test report:** https://OWNER.github.io/REPO/
+- **Latest test report:** https://lilrom13.github.io/sprout8/
 
 ## Quick start
 
