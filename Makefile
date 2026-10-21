@@ -8,6 +8,7 @@
 #   make emu-test        Python emulator unit tests
 #   make wave TB=tb_cpu  dump a waveform (build/waves/tb_cpu.ghw) for GTKWave
 #   make ci              what the CI test job runs
+#   make logisim         Logisim memory images and test vectors -> build/logisim/
 
 GHDL    ?= ghdl
 PYTHON  ?= python3
@@ -19,7 +20,7 @@ ONLY    := $(if $(TB),--only $(TB),)
 VHDL_FILES := $(shell $(PYTHON) -c "import json;m=json.load(open('hw/manifest.json'));print(' '.join(m['rtl']+m['tb_support']+[t['file'] for t in m['testbenches']]))")
 LINT_WORK  := build/lint
 
-.PHONY: test nightly mutation report lint emu-test wave ci clean
+.PHONY: test nightly mutation report lint emu-test wave ci logisim clean
 
 test:
 	$(PYTHON) tools/run_tests.py --ghdl $(GHDL) --out $(OUT) $(ONLY)
@@ -48,6 +49,10 @@ wave:
 	@echo "open build/waves/$(TB).ghw in GTKWave"
 
 ci: lint emu-test test report
+
+logisim:
+	$(PYTHON) tools/hex2logisim.py sw/programs/*.hex
+	$(PYTHON) tools/gen_logisim_vectors.py
 
 clean:
 	rm -rf build

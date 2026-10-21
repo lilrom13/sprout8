@@ -439,6 +439,7 @@ Writes to 0xF1 and 0xF3–0xFF are discarded. Only a strobed read (`re = 1`) of 
 - Set the data interface to separate load and store ports.
 - Tie the load / output-enable input high, so `rdata` is always driven.
 - Store = RAM write enable; clock = `clk`.
+- Label the RAM `ram`. Headless runs load programs with `--load <image> ram`; without the label, Logisim loads the image into every RAM and ROM, including the microcode ROM.
 - Check in your Logisim version that the read output follows the address without a clock edge.
 
 **I/O.**
