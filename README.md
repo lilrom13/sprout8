@@ -32,7 +32,7 @@ python3 sw/emulator/sprout8.py sw/programs/b2_print_string.hex
 ## Repository layout
 
 ```
-docs/spec/            ISA manual (the source of truth)
+docs/spec/            ISA manual (the source of truth) and module specification
 docs/assets/          logo
 hw/rtl/               reference implementation, VHDL-2008
 hw/tb/                testbenches, golden model, test data
