@@ -6,6 +6,8 @@
 
 This document splits the reference multi-cycle implementation of Sprout-8 (ISA manual, Chapter 7) into hardware modules and specifies each one: its ports, its behavior, its internal structure and the checks it must pass. It is written so that each module can be built and tested on its own, in Logisim-evolution or in VHDL, and then assembled into a working CPU.
 
+Each module also has a **guide** in [`docs/modules/`](../modules/README.md) that explains it in depth, with diagrams, worked examples, common mistakes and a suggested build order. This document stays short and exact; the guides teach.
+
 The ISA manual stays the source of truth for what software can observe. This volume is normative only for the module boundaries: two implementations that follow it can swap modules with each other, and the testbenches in `hw/tb/` check exactly these interfaces.
 
 | Item | Value |
@@ -161,6 +163,8 @@ Bits 19 and 20 are used only inside `control`; the `ctrl` output that leaves `co
 
 ## 3. `reg8` — generic 8-bit register
 
+> **Guide:** [MAR — `reg8`](../modules/reg8.md) explains this module in depth, with diagrams, worked examples and common mistakes.
+
 Used as the MAR. A general load register with a reset value.
 
 ### 3.1 Ports
@@ -193,6 +197,8 @@ One 8-bit Register component; `load` → Enable. Logisim subcircuits have no gen
 
 ## 4. `pc` — program counter
 
+> **Guide:** [PC — program counter](../modules/pc.md) explains this module in depth, with diagrams, worked examples and common mistakes.
+
 ### 4.1 Ports
 
 | Port | Dir | Width | Description |
@@ -221,6 +227,8 @@ An 8-bit Register; an Adder (or an Incrementer built from an Adder with constant
 Reset beats load and inc; hold; 256 increments visit every value and wrap; any value loads; load beats inc; 0xFF + 1 = 0x00.
 
 ## 5. `sp` — stack pointer
+
+> **Guide:** [SP — stack pointer](../modules/sp.md) explains this module in depth, with diagrams, worked examples and common mistakes.
 
 ### 5.1 Ports
 
@@ -253,6 +261,8 @@ Reset gives 0xF0, even with `dec = 1`; the first decrement gives 0xEF; 256 decre
 
 ## 6. `flags` — condition flags
 
+> **Guide:** [Flags](../modules/flags.md) explains this module in depth, with diagrams, worked examples and common mistakes.
+
 ### 6.1 Ports
 
 | Port | Dir | Width | Description |
@@ -275,6 +285,8 @@ Three D flip-flops with a shared enable, or one 3-bit Register with a Splitter o
 Reset with all inputs high clears Z C N; all 8 patterns load and hold while the inputs change; the outputs change only after the edge.
 
 ## 7. `ir` — instruction register
+
+> **Guide:** [IR — instruction register](../modules/ir.md) explains this module in depth, with diagrams, worked examples and common mistakes.
 
 Two bytes, loaded separately during fetch, with the byte-0 fields decoded.
 
@@ -305,6 +317,8 @@ Two 8-bit Registers sharing `d`; one Splitter on `ir0` (fan-out 3, bit groups 7�
 Reset clears both bytes even with both loads set; all 256 values of byte 0 load with correct fields and leave byte 1 alone; all 256 values of byte 1 load and leave byte 0 alone; hold.
 
 ## 8. `regfile` — register file A, B, C, D
+
+> **Guide:** [Register file](../modules/regfile.md) explains this module in depth, with diagrams, worked examples and common mistakes.
 
 Four 8-bit registers with one write port and two combinational read ports.
 
@@ -340,6 +354,8 @@ Four 8-bit registers with one write port and two combinational read ports.
 Reset values on both ports; each register written with a distinct value and every (port A, port B) pair read back; `we = 0` writes nothing; a write touches only its register; read-during-write timing; reset beats write; 2,000 random cycles against a model.
 
 ## 9. `alu` — arithmetic and logic unit
+
+> **Guide:** [ALU](../modules/alu.md) explains this module in depth, with diagrams, worked examples and common mistakes.
 
 Purely combinational. No clock, no state.
 
@@ -382,6 +398,8 @@ Then:
 Edge cases C2–C5 (FF + 01, 03 − 05, 05 − 05, OR, SHR 0x81, SHL 0x80, INC FF, DEC 00), then the exhaustive sweep: every op × every a × every b, 524,288 cases, against an integer model.
 
 ## 10. `mem_io` — memory and I/O
+
+> **Guide:** [Memory and I/O](../modules/mem_io.md) explains this module in depth, with diagrams, worked examples and common mistakes.
 
 240 bytes of RAM plus the memory-mapped ports. The terminal, keyboard, switches and LEDs are **outside** this module (on the board), connected through ports, so the module can be tested without them.
 
@@ -460,6 +478,8 @@ Writes to 0xF1 and 0xF3–0xFF are discarded. Only a strobed read (`re = 1`) of 
 - Reserved ports read as 0x00.
 
 ## 11. `control` — control unit
+
+> **Guide:** [Control unit](../modules/control.md) explains this module in depth, with diagrams, worked examples and common mistakes.
 
 A step counter, the halted and illegal bits, and a decoder that turns (IR0, step, Z, C) into the control word.
 
@@ -647,6 +667,8 @@ bus_src[2] = drv_MEM + drv_RD + drv_RS + drv_ALU     (codes 4, 5, 6, 7)
 
 ## 12. `cpu` — the processor core
 
+> **Guide:** [CPU — the datapath](../modules/cpu.md) explains this module in depth, with diagrams, worked examples and common mistakes.
+
 Instantiates every module above except `mem_io`, and wires them around the bus.
 
 ### 12.1 Ports
@@ -703,6 +725,8 @@ Use one 8-input Multiplexer for the bus, not tri-state buffers. Use a Splitter t
 - Random programs run in lockstep with the golden model, comparing all architectural state after every instruction.
 
 ## 13. `sprout8_board` — Logisim top level
+
+> **Guide:** [Board](../modules/board.md) explains this module in depth, with diagrams, worked examples and common mistakes.
 
 Not part of the VHDL design. This is the circuit students run.
 
