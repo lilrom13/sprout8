@@ -2,6 +2,10 @@
 
 Running notes on the Logisim-evolution implementation in `sprout8.circ`: how it is tested, what was learned, and what is still open. Newest first within each section.
 
+## Decisions
+
+- **2026-10-21: Logisim is the primary implementation.** `hw/logisim/sprout8.circ` is the design. It is verified by exporting it to VHDL and running the testbenches in `hw/tb/`. `hw/rtl/` keeps only `sprout8_pkg.vhd` (types shared by the testbenches); no hand-written reference RTL is planned. Consequences: CI, the manifest and `tools/mutation_check.py` must move from `hw/rtl/*.vhd` to the Logisim export; circuit changes are reviewed by running the tests, since `.circ` diffs are not readable.
+
 ## Status
 
 | Module | Logisim | Logisim test vectors | VHDL export + testbench |
