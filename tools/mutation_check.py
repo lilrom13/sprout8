@@ -1,95 +1,141 @@
 #!/usr/bin/env python3
-"""Mutation check: does the test suite catch real bugs?
+"""Mutation check: does the test suite catch real bugs in the Logisim design?
 
-Each mutation plants one small, realistic bug in a copy of hw/, then reruns the
-testbenches with tools/run_tests.py --hw-dir. A mutation is "killed" if at
-least one testbench fails; a surviving mutation is a gap in the tests.
+Each mutation plants one small, realistic bug in a copy of the Logisim project, then
+reruns the circuit's testbench with tools/run_tests.py --hw-dir. A mutation is "killed"
+if the testbench fails; a surviving mutation is a gap in the tests.
+
+The mutations are generated from the drawing itself, so they follow the design as it
+grows. For every circuit that has a testbench (the first circuit listed for it in
+hw/manifest.json), each of these components gives one mutant:
+
+    Constant      value with its lowest bit flipped (0x01 -> 0x00, 0xF0 -> 0xF1)
+    Gates         AND <-> OR, NAND <-> NOR, XOR -> OR, XNOR -> NOR
+    Adder         -> Subtractor, and Subtractor -> Adder
+    Splitter      two bits that go to different outputs swapped (e.g. rd <-> rs)
+
+A mutant that Logisim cannot export (for example when the replacement component has
+different pins) is reported as "invalid" and does not count as a test gap.
 
 Writes <out>/mutation.json, which tools/report.py adds to the report.
-Exit status is 1 if any mutation survives (or is invalid), so CI can gate on it.
+Exit status is 1 if any mutation survives, so CI can gate on it.
 
-Usage: python3 tools/mutation_check.py [--out build/report] [--only-file alu.vhd]
+Usage:
+    python3 tools/mutation_check.py [--out build/report] [--only-circuit pc] [--list]
 """
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as cf
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+MANIFEST = ROOT / "hw" / "manifest.json"
 
-# (description, file under hw/rtl, original text, mutated text, testbenches to run)
-MUTATIONS = [
-    ("ALU: SUB borrow uses <= instead of <", "alu.vhd",
-     "if unsigned(a) < unsigned(b) then", "if unsigned(a) <= unsigned(b) then", "tb_alu tb_cpu"),
-    ("ALU: SHR carry taken from bit 7", "alu.vhd",
-     "r  := '0' & a(7 downto 1);\n        cy := a(0);", "r  := '0' & a(7 downto 1);\n        cy := a(7);", "tb_alu tb_cpu"),
-    ("ALU: Z flag ignores bit 7", "alu.vhd",
-     "if r = x\"00\" then", "if r(6 downto 0) = \"0000000\" then", "tb_alu tb_cpu"),
-    ("Register file: reset does not clear", "regfile.vhd",
-     "regs <= (others => (others => '0'));\n      elsif", "null;\n      elsif", "tb_regfile tb_cpu"),
-    ("Register file: port B reads port A's address", "regfile.vhd",
-     "rdata_b  <= regs(to_integer(unsigned(raddr_b)));", "rdata_b  <= regs(to_integer(unsigned(raddr_a)));", "tb_regfile tb_cpu"),
-    ("Flags: C not loaded", "flags.vhd",
-     "zr <= z_in; cr <= c_in; nr <= n_in;", "zr <= z_in; nr <= n_in;", "tb_flags tb_cpu"),
-    ("PC: increment has priority over load", "pc.vhd",
-     "elsif load = '1' then\n        r <= unsigned(d);\n      elsif inc = '1' then\n        r <= r + 1;",
-     "elsif inc = '1' then\n        r <= r + 1;\n      elsif load = '1' then\n        r <= unsigned(d);", "tb_pc tb_cpu"),
-    ("SP: resets to 0xEF", "sprout8_pkg.vhd",
-     "constant RESET_SP : byte_t := x\"F0\";", "constant RESET_SP : byte_t := x\"EF\";", "tb_sp tb_cpu"),
-    ("IR: rd and rs fields swapped", "ir.vhd",
-     "rd     <= r0(3 downto 2);\n  rs     <= r0(1 downto 0);", "rd     <= r0(1 downto 0);\n  rs     <= r0(3 downto 2);", "tb_ir tb_cpu"),
-    ("Memory: I/O writes alias into RAM", "mem_io.vhd",
-     "if not is_io then\n          ram(", "if true then\n          ram(", "tb_mem_io tb_cpu"),
-    ("Memory: TTY_IN consumed without the read strobe", "mem_io.vhd",
-     "tty_in_ack    <= '1' when re = '1' and", "tty_in_ack    <= '1' when", "tb_mem_io tb_cpu"),
-    ("Memory: LEDS port reads back 0x00", "mem_io.vhd",
-     "    elsif addr = PORT_LEDS then\n      rdata <= leds_r;", "    elsif addr = PORT_LEDS then\n      rdata <= x\"00\";", "tb_mem_io tb_cpu"),
-    ("Control: JNZ tests C instead of Z", "control.vhd",
-     "when \"10\"   => take := z = '0';", "when \"10\"   => take := c = '0';", "tb_control tb_cpu"),
-    ("Control: INC forgets to force B = 1", "control.vhd",
-     "w.alu_op := ALU_ADD; w.alu_b_one := '1';   -- INC", "w.alu_op := ALU_ADD;   -- INC", "tb_control tb_cpu"),
-    ("Control: CMP writes its result", "control.vhd",
-     "w.alu_op := ALU_SUB; w.flags_load := '1'; w.step_reset := '1';",
-     "w.alu_op := ALU_SUB; w.flags_load := '1'; w.step_reset := '1'; w.bus_src := BUS_ALU; w.reg_we := '1';", "tb_control tb_cpu"),
-    ("Control: PUSH writes before decrementing SP", "control.vhd",
-     "when 4 => w.sp_dec := '1';\n                    when 5 => w.bus_src := BUS_SP; w.mar_load := '1';\n                    when others => w.bus_src := BUS_RD;",
-     "when 4 => w.bus_src := BUS_SP; w.mar_load := '1';\n                    when 5 => w.sp_dec := '1';\n                    when others => w.bus_src := BUS_RD;", "tb_control tb_cpu"),
-    ("Control: illegal stack encoding treated as NOP", "control.vhd",
-     "                when others =>                                -- reserved\n                  w.step_reset := '1'; halt_now <= '1'; ill_now <= '1';\n              end case;\n          end case;",
-     "                when others =>                                -- reserved\n                  w.step_reset := '1';\n              end case;\n          end case;", "tb_control tb_cpu"),
-    ("Control: halted CPU keeps fetching", "control.vhd",
-     "if halted_r = '1' then\n      w := CTRL_IDLE;\n    else", "if false then\n      w := CTRL_IDLE;\n    else", "tb_control tb_cpu"),
-]
+GATE_SWAP = {"AND Gate": "OR Gate", "OR Gate": "AND Gate", "NAND Gate": "NOR Gate",
+             "NOR Gate": "NAND Gate", "XOR Gate": "OR Gate", "XNOR Gate": "NOR Gate"}
+ARITH_SWAP = {"Adder": "Subtractor", "Subtractor": "Adder"}
+# shorter runs of the long testbenches: a planted bug shows up within a few random programs
+MUTANT_GENERICS = {"tb_cpu": {"N_RANDOM": 30}}
 
 
-def run_one(desc: str, fname: str, old: str, new: str, tbs: str, ghdl: str) -> dict:
-    rec = {"description": desc, "file": f"hw/rtl/{fname}", "testbenches": tbs.split(),
-           "caught_by": [], "result": "invalid"}
+def attrs(comp: ET.Element) -> dict[str, ET.Element]:
+    return {a.get("name"): a for a in comp.findall("a")}
+
+
+def set_attr(comp: ET.Element, name: str, val: str) -> None:
+    a = attrs(comp).get(name)
+    if a is None:
+        a = ET.SubElement(comp, "a", name=name)
+    a.set("val", val)
+
+
+def mutants_of(comp: ET.Element) -> list[tuple[str, callable]]:
+    """(description, function that applies the mutation to this component) pairs."""
+    kind, a = comp.get("name"), attrs(comp)
+    out = []
+    if kind == "Constant":
+        width = int(a["width"].get("val")) if "width" in a else 1
+        value = int(a["value"].get("val"), 0) if "value" in a else 1          # Logisim's default is 1
+        new = value ^ 1
+        digits = max(1, (width + 3) // 4)
+        out.append((f"Constant 0x{value:0{digits}x} -> 0x{new:0{digits}x}",
+                    lambda c, n=new: set_attr(c, "value", hex(n))))
+    elif kind in GATE_SWAP:
+        out.append((f"{kind} -> {GATE_SWAP[kind]}", lambda c, k=GATE_SWAP[kind]: c.set("name", k)))
+    elif kind in ARITH_SWAP:
+        out.append((f"{kind} -> {ARITH_SWAP[kind]}", lambda c, k=ARITH_SWAP[kind]: c.set("name", k)))
+    elif kind == "Splitter":
+        bits = {int(n[3:]): e.get("val") for n, e in a.items() if n.startswith("bit") and n[3:].isdigit()}
+        mapped = sorted((b, v) for b, v in bits.items() if v != "none")
+        if mapped and len({v for _, v in mapped}) > 1:
+            (lo, vlo), (hi, vhi) = mapped[0], mapped[-1]      # bits from the first and last groups
+            def swap(c, lo=lo, hi=hi, vlo=vlo, vhi=vhi):
+                set_attr(c, f"bit{lo}", vhi)
+                set_attr(c, f"bit{hi}", vlo)
+            out.append((f"Splitter bits {lo} and {hi} swapped", swap))
+    return out
+
+
+def plan(manifest: dict, circ: Path, only: str | None) -> list[dict]:
+    """Every mutant of every tested circuit, without applying any."""
+    tree = ET.parse(circ)
+    present = {c.get("name"): c for c in tree.getroot().findall("circuit")}
+    jobs = []
+    for tb in manifest["testbenches"]:
+        circuit = tb["circuits"][0]                       # a circuit is mutated for its own testbench
+        if circuit not in present or any(c not in present for c in tb["circuits"]):
+            continue
+        if only and circuit != only:
+            continue
+        for idx, comp in enumerate(present[circuit].findall("comp")):
+            for desc, _ in mutants_of(comp):
+                jobs.append({"circuit": circuit, "comp_index": idx, "loc": comp.get("loc"),
+                             "description": f"{circuit}: {desc} at {comp.get('loc')}",
+                             "testbench": tb["name"], "mutation": desc})
+    return jobs
+
+
+def apply(circ_src: Path, circ_dst: Path, job: dict) -> None:
+    tree = ET.parse(circ_src)
+    circuit = next(c for c in tree.getroot().findall("circuit") if c.get("name") == job["circuit"])
+    comp = circuit.findall("comp")[job["comp_index"]]
+    fn = next(f for d, f in mutants_of(comp) if d == job["mutation"])
+    fn(comp)
+    tree.write(circ_dst, xml_declaration=True, encoding="UTF-8")
+
+
+def run_one(job: dict, manifest: dict, ghdl: str, logisim: str | None) -> dict:
+    rec = {"description": job["description"], "file": f"{manifest['design']['logisim']}#{job['circuit']}",
+           "testbenches": [job["testbench"]], "caught_by": [], "result": "invalid"}
     with tempfile.TemporaryDirectory(prefix="s8mut_") as tmp:
         hw = Path(tmp) / "hw"
         shutil.copytree(ROOT / "hw", hw)
-        path = hw / "rtl" / fname
-        src = path.read_text()
-        if src.count(old) != 1:
-            rec["detail"] = "pattern not found exactly once (update the mutation)"
-            return rec
-        path.write_text(src.replace(old, new))
+        circ = hw / Path(manifest["design"]["logisim"]).relative_to("hw")
+        apply(circ, circ, job)
         out = Path(tmp) / "report"
-        r = subprocess.run([sys.executable, str(ROOT / "tools" / "run_tests.py"), "--hw-dir", str(hw),
-                            "--out", str(out), "--waves", "never", "-q", "--ghdl", ghdl,
-                            "--only", *tbs.split()], cwd=ROOT, capture_output=True, text=True,
-                           env={k: v for k, v in os.environ.items() if k != "GITHUB_ACTIONS"})
-        if r.returncode == 2:
-            rec["detail"] = "mutant does not compile"
+        cmd = [sys.executable, str(ROOT / "tools" / "run_tests.py"), "--hw-dir", str(hw), "--out", str(out),
+               "--waves", "never", "-q", "--ghdl", ghdl, "--only", job["testbench"], "-j", "1"]
+        cmd += [f"-g{job['testbench']}.{k}={v}" for k, v in MUTANT_GENERICS.get(job["testbench"], {}).items()]
+        if logisim:
+            cmd += ["--logisim", logisim]
+        subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True,
+                       env={k: v for k, v in os.environ.items() if k != "GITHUB_ACTIONS"})
+        if not (out / "results.json").exists():
+            rec["detail"] = "test runner did not produce results"
             return rec
-        res = json.loads((out / "results.json").read_text())
-        rec["caught_by"] = [t["name"] for t in res["testbenches"] if t["status"] != "passed"]
+        tb = json.loads((out / "results.json").read_text())["testbenches"][0]
+        if "not run: the design did not build" in tb["notes"]:
+            rec["detail"] = "mutant does not export or compile"
+            return rec
+        rec["caught_by"] = [tb["name"]] if tb["status"] != "passed" else []
         rec["result"] = "killed" if rec["caught_by"] else "survived"
     return rec
 
@@ -98,30 +144,42 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default=str(ROOT / "build" / "report"))
     ap.add_argument("--ghdl", default=os.environ.get("GHDL", "ghdl"))
-    ap.add_argument("--only-file", help="only mutations in this RTL file, e.g. alu.vhd")
+    ap.add_argument("--logisim", help="Logisim-evolution launcher or release .jar (default: $LOGISIM, PATH, /opt)")
+    ap.add_argument("--only-circuit", help="only mutate this circuit, e.g. pc")
+    ap.add_argument("--list", action="store_true", help="list the mutations without running them")
+    ap.add_argument("-j", "--jobs", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     args = ap.parse_args()
 
-    muts = [m for m in MUTATIONS if not args.only_file or m[1] == args.only_file]
+    manifest = json.loads(MANIFEST.read_text())
+    jobs = plan(manifest, ROOT / manifest["design"]["logisim"], args.only_circuit)
+    if args.list:
+        for j in jobs:
+            print(f"  {j['description']:60s} {j['testbench']}")
+        print(f"{len(jobs)} mutations")
+        return 0
+
     records = []
-    for m in muts:
-        rec = run_one(*m, ghdl=args.ghdl)
-        records.append(rec)
-        tag = {"killed": "KILLED  ", "survived": "SURVIVED"}.get(rec["result"], "INVALID ")
-        extra = ", ".join(rec["caught_by"]) or rec.get("detail", "<-- test gap")
-        print(f"  {tag} {rec['description']:55s} {extra}", flush=True)
-        if rec["result"] != "killed" and os.environ.get("GITHUB_ACTIONS") == "true":
-            print(f"::warning title=Mutation {rec['result']}::{rec['description']} ({rec['file']})")
+    with cf.ThreadPoolExecutor(max_workers=args.jobs) as pool:
+        futs = [pool.submit(run_one, j, manifest, args.ghdl, args.logisim) for j in jobs]
+        for fut in futs:                                   # in plan order, for a stable report
+            rec = fut.result()
+            records.append(rec)
+            tag = {"killed": "KILLED  ", "survived": "SURVIVED"}.get(rec["result"], "INVALID ")
+            extra = ", ".join(rec["caught_by"]) or rec.get("detail", "<-- test gap")
+            print(f"  {tag} {rec['description']:60s} {extra}", flush=True)
+            if rec["result"] == "survived" and os.environ.get("GITHUB_ACTIONS") == "true":
+                print(f"::warning title=Mutation survived::{rec['description']} ({rec['file']})")
 
     killed = sum(r["result"] == "killed" for r in records)
-    data = {"totals": {"total": len(records), "killed": killed,
-                       "survived": sum(r["result"] == "survived" for r in records),
+    survived = sum(r["result"] == "survived" for r in records)
+    data = {"totals": {"total": len(records), "killed": killed, "survived": survived,
                        "invalid": sum(r["result"] == "invalid" for r in records)},
             "mutations": records}
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "mutation.json").write_text(json.dumps(data, indent=2))
-    print(f"{killed}/{len(records)} mutations killed -> {out / 'mutation.json'}")
-    return 0 if killed == len(records) else 1
+    print(f"{killed}/{len(records)} mutations killed, {survived} survived -> {out / 'mutation.json'}")
+    return 1 if survived else 0
 
 
 if __name__ == "__main__":
