@@ -15,8 +15,8 @@ package sprout8_pkg is
   type    regs_t   is array (0 to 3) of byte_t;            -- register file contents
 
   -- ---------------- reset values and I/O ports (ISA 3.3, 4.3) ---------------
-  constant RESET_PC        : byte_t := x"00";
-  constant RESET_SP        : byte_t := x"F0";
+  constant RESET_PC : byte_t := x"00";
+  constant RESET_SP : byte_t := x"F0";
 
   constant PORT_LEDS       : byte_t := x"F0";
   constant PORT_SWITCHES   : byte_t := x"F1";
