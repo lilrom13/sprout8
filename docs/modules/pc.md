@@ -163,6 +163,16 @@ For this to work, the clock of your `pc` subcircuit must be an **input pin label
 
 A failing row tells you the cycle. Look at the comment lines above it in `pc.txt` (`# load beats inc`, `# 256 increments …`) to see which rule broke.
 
+### Testing the VHDL export against `tb_pc`
+
+The same circuit can also be checked by the VHDL testbench used for the reference design. Logisim exports the `pc` circuit to VHDL (a structural copy of the drawing), and GHDL runs `hw/tb/tb_pc.vhd` on it:
+
+```sh
+make logisim-tb TB=tb_pc GHDL=/path/to/ghdl
+```
+
+Expected: `tb_pc: PASS (517 checks)`. You need Logisim-evolution and GHDL installed; how the export works, and its limits, are described in [`hw/logisim/NOTES.md`](../../hw/logisim/NOTES.md).
+
 ## Checklist (`tb_pc`)
 
 The vector file automates these checks. To do them by hand, poke the inputs and tick the clock (Ctrl-T):

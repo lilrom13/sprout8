@@ -9,6 +9,7 @@
 #   make wave TB=tb_cpu  dump a waveform (build/waves/tb_cpu.ghw) for GTKWave
 #   make ci              what the CI test job runs
 #   make logisim         Logisim memory images and test vectors -> build/logisim/
+#   make logisim-tb TB=tb_pc   export a Logisim circuit to VHDL and run its testbench
 
 GHDL    ?= ghdl
 PYTHON  ?= python3
@@ -20,7 +21,7 @@ ONLY    := $(if $(TB),--only $(TB),)
 VHDL_FILES := $(shell $(PYTHON) -c "import json;m=json.load(open('hw/manifest.json'));print(' '.join(m['rtl']+m['tb_support']+[t['file'] for t in m['testbenches']]))")
 LINT_WORK  := build/lint
 
-.PHONY: test nightly mutation report lint emu-test wave ci logisim clean
+.PHONY: test nightly mutation report lint emu-test wave ci logisim logisim-tb clean
 
 test:
 	$(PYTHON) tools/run_tests.py --ghdl $(GHDL) --out $(OUT) $(ONLY)
@@ -53,6 +54,10 @@ ci: lint emu-test test report
 logisim:
 	$(PYTHON) tools/hex2logisim.py sw/programs/*.hex
 	$(PYTHON) tools/gen_logisim_vectors.py
+
+logisim-tb:
+	@test -n "$(TB)" || (echo "usage: make logisim-tb TB=tb_pc" && exit 2)
+	$(PYTHON) tools/logisim2vhdl.py $(patsubst tb_%,%,$(TB)) --test --ghdl $(GHDL)
 
 clean:
 	rm -rf build
