@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """Sprout-8 test runner.
 
-Compiles the RTL and testbenches listed in hw/manifest.json with GHDL, runs the
-testbenches in parallel and writes machine-readable results:
+The design is the Logisim project named in hw/manifest.json. For each testbench, the
+runner exports the circuits it tests to VHDL (tools/logisim2vhdl.py), compiles them with
+the packages, the testbench support files and any adapter in its own GHDL work library,
+runs the testbenches in parallel and writes machine-readable results:
 
     <out>/results.json   full results (input for tools/report.py)
     <out>/junit.xml      JUnit XML for CI test reporters
     <out>/logs/<tb>.log  simulator output per testbench
     <out>/waves/<tb>.ghw waveform of each failing testbench (--waves on-failure)
 
-Exit status: 0 if every testbench passed, 1 if any failed, 2 on a compile error.
+A testbench whose circuit is not in the Logisim project yet is reported as "missing"
+and does not fail the run, so the design can be built one module at a time. With
+--require-all (used for releases), a missing circuit fails the run.
+
+Exit status: 0 if no testbench failed (and, with --require-all, none is missing), else 1.
 
 Examples:
     python3 tools/run_tests.py
@@ -32,6 +38,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tools"))
+import logisim2vhdl  # noqa: E402
 
 RE_PASS = re.compile(r"(\w+): PASS \((\d+) checks\)")
 RE_FAIL = re.compile(r"(\w+): FAIL \((\d+) of (\d+) checks failed\)")
@@ -79,17 +87,31 @@ def annotate(level: str, title: str, msg: str) -> None:
         print(f"::{level} title={title}::{msg}")
 
 
-# --------------------------------------------------------------------------- compile
-def compile_all(ghdl: str, manifest: dict, work: Path, hw_dir: Path | None, std: str) -> tuple[bool, str]:
+# --------------------------------------------------------------------------- build
+def build_tb(ghdl: str, tb: dict, manifest: dict, work: Path, vhdl: Path, hw_dir: Path | None,
+             std: str, logisim: list[str]) -> str | None:
+    """Export the testbench's circuits and compile everything into `work`. Returns an error or None."""
+    design = manifest["design"]
+    circ = remap(design["logisim"], hw_dir)
+    adapters = remap(design["adapters"], hw_dir)
+    sources = [remap(f, hw_dir) for f in manifest["packages"] + manifest["tb_support"]]
+    for circuit in tb["circuits"]:
+        adapter = adapters / f"{circuit}.vhd"
+        try:
+            logisim2vhdl.export(circuit, circ, vhdl / circuit, logisim,
+                                rename_to=f"{circuit}_logisim" if adapter.exists() else None)
+        except logisim2vhdl.ExportError as e:
+            return f"Logisim export failed: {e}"
+        sources += logisim2vhdl.vhdl_files(vhdl / circuit)
+        if adapter.exists():
+            sources.append(adapter)
+    sources.append(remap(tb["file"], hw_dir))
     work.mkdir(parents=True, exist_ok=True)
-    files = manifest["rtl"] + manifest["tb_support"] + [t["file"] for t in manifest["testbenches"]]
-    log = []
-    for f in files:
-        r = sh([ghdl, "-a", f"--std={std}", f"--workdir={work}", str(remap(f, hw_dir))])
+    for f in sources:
+        r = sh([ghdl, "-a", f"--std={std}", f"--workdir={work}", str(f)])
         if r.returncode != 0:
-            log.append(f"--- {f}\n{r.stdout}{r.stderr}")
-            return False, "\n".join(log)
-    return True, ""
+            return f"compile error in {f.name}\n{r.stdout}{r.stderr}"
+    return None
 
 
 # --------------------------------------------------------------------------- run one
@@ -119,9 +141,17 @@ def parse_log(text: str) -> dict:
     return res
 
 
-def run_tb(ghdl: str, backend: str, tb: dict, work: Path, generics: dict, std: str,
-           out: Path, wave: bool = False) -> dict:
+def missing_result(tb: dict, absent: list[str]) -> dict:
+    return {"status": "missing", "checks": 0, "failed_checks": 0, "failures": [], "sim_time": None,
+            "notes": [f"not in the Logisim project yet: {', '.join(absent)}"], "duration_s": 0.0,
+            "name": tb["name"], "unit": tb.get("unit", tb["name"]), "file": tb["file"], "generics": {},
+            "log": ""}
+
+
+def run_tb(ghdl: str, backend: str, tb: dict, manifest: dict, generics: dict, std: str,
+           out: Path, hw_dir: Path | None, logisim: list[str], wave: bool = False) -> dict:
     name = tb["name"]
+    work = out / "work" / name
     gargs = [f"-g{k}={v}" for k, v in generics.items()]
     run_opts = ["--ieee-asserts=disable-at-0"] + gargs
     if wave:
@@ -129,6 +159,13 @@ def run_tb(ghdl: str, backend: str, tb: dict, work: Path, generics: dict, std: s
         run_opts.append(f"--wave={out / 'waves' / (name + '.ghw')}")
     timeout = tb.get("timeout_s", 600)
     t0 = time.monotonic()
+    if not wave:
+        err = build_tb(ghdl, tb, manifest, work, out / "vhdl" / name, hw_dir, std, logisim)
+        if err is not None:
+            res = parse_log("")
+            res["failures"].append(err.splitlines()[0])
+            res["notes"].append("not run: the design did not build")
+            return finish_tb(res, tb, generics, out, name, err, t0, built=False)
     try:
         if backend == "mcode":
             r = sh([ghdl, "--elab-run", f"--std={std}", f"--workdir={work}", name] + run_opts, timeout=timeout)
@@ -150,12 +187,16 @@ def run_tb(ghdl: str, backend: str, tb: dict, work: Path, generics: dict, std: s
         res = parse_log(text)
         res["status"] = "timeout"
         res["failures"].append(f"timed out after {timeout} s")
+    return finish_tb(res, tb, generics, out, f"{name}{'.wave' if wave else ''}", text, t0, built=True)
+
+
+def finish_tb(res: dict, tb: dict, generics: dict, out: Path, log_name: str, text: str, t0: float,
+              built: bool) -> dict:
     res["duration_s"] = round(time.monotonic() - t0, 2)
     (out / "logs").mkdir(parents=True, exist_ok=True)
-    log_name = f"{name}{'.wave' if wave else ''}.log"
-    (out / "logs" / log_name).write_text(text)
-    res.update(name=name, unit=tb.get("unit", name), file=tb["file"], generics=generics,
-               log=f"logs/{log_name}")
+    (out / "logs" / f"{log_name}.log").write_text(text)
+    res.update(name=tb["name"], unit=tb.get("unit", tb["name"]), file=tb["file"], generics=generics,
+               log=f"logs/{log_name}.log", built=built)
     return res
 
 
@@ -165,6 +206,7 @@ def write_junit(results: dict, path: Path) -> None:
     suite = ET.Element("testsuite", name="sprout8", tests=str(len(tbs)),
                        failures=str(sum(t["status"] == "failed" for t in tbs)),
                        errors=str(sum(t["status"] in ("error", "timeout") for t in tbs)),
+                       skipped=str(sum(t["status"] == "missing" for t in tbs)),
                        time=str(sum(t["duration_s"] for t in tbs)),
                        timestamp=results["meta"]["started"])
     props = ET.SubElement(suite, "properties")
@@ -179,6 +221,8 @@ def write_junit(results: dict, path: Path) -> None:
         elif t["status"] in ("error", "timeout"):
             e = ET.SubElement(case, "error", message=t["status"])
             e.text = "\n\n".join(t["failures"]) or "see log"
+        elif t["status"] == "missing":
+            ET.SubElement(case, "skipped", message="; ".join(t["notes"]))
         so = ET.SubElement(case, "system-out")
         so.text = f"{t['checks']} checks; " + "; ".join(t["notes"])
     ET.ElementTree(suite).write(path, encoding="utf-8", xml_declaration=True)
@@ -202,6 +246,9 @@ def main() -> int:
                     help="override a testbench generic, e.g. tb_cpu.RAND_SEED=42")
     ap.add_argument("--out", default=str(ROOT / "build" / "report"))
     ap.add_argument("--hw-dir", help="use this directory in place of hw/ (mutation testing)")
+    ap.add_argument("--logisim", help="Logisim-evolution launcher or release .jar (default: $LOGISIM, PATH, /opt)")
+    ap.add_argument("--require-all", action="store_true",
+                    help="fail if a testbench's circuit is missing from the Logisim project (releases)")
     ap.add_argument("-j", "--jobs", type=int, default=os.cpu_count() or 2)
     ap.add_argument("--waves", choices=["on-failure", "never", "always"], default="on-failure")
     ap.add_argument("-q", "--quiet", action="store_true")
@@ -214,8 +261,12 @@ def main() -> int:
         shutil.rmtree(out)
     out.mkdir(parents=True)
     hw_dir = Path(args.hw_dir).resolve() if args.hw_dir else None
-    work = out / "work"
     info = ghdl_info(args.ghdl)
+    try:
+        logisim = logisim2vhdl.logisim_command(args.logisim)
+    except logisim2vhdl.ExportError as e:
+        sys.exit(f"error: {e}")
+    available = set(logisim2vhdl.circuits(remap(manifest["design"]["logisim"], hw_dir)))
     overrides = parse_generic_overrides(args.generic)
 
     tbs = manifest["testbenches"]
@@ -230,13 +281,6 @@ def main() -> int:
     log = (lambda *a: None) if args.quiet else print
     log(f"GHDL: {info['version']} ({info['backend']}), profile: {args.profile}")
 
-    ok, clog = compile_all(args.ghdl, manifest, work, hw_dir, std)
-    if not ok:
-        print("COMPILE ERROR\n" + clog)
-        annotate("error", "VHDL compile error", clog[-3000:])
-        (out / "compile.log").write_text(clog)
-        return 2
-
     def generics_for(tb: dict) -> dict:
         g = dict(tb.get("generics", {}))
         g.update(tb.get("profiles", {}).get(args.profile, {}).get("generics", {}))
@@ -244,9 +288,18 @@ def main() -> int:
         return g
 
     results = []
+    runnable = []
+    for tb in tbs:
+        absent = [c for c in tb["circuits"] if c not in available]
+        if absent:
+            r = missing_result(tb, absent)
+            results.append(r)
+            log(f"  MISSING {r['name']:12s} {r['notes'][0]}")
+        else:
+            runnable.append(tb)
     with cf.ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
-        futs = {pool.submit(run_tb, args.ghdl, info["backend"], tb, work, generics_for(tb), std, out,
-                            args.waves == "always"): tb for tb in tbs}
+        futs = {pool.submit(run_tb, args.ghdl, info["backend"], tb, manifest, generics_for(tb), std, out,
+                            hw_dir, logisim, args.waves == "always"): tb for tb in runnable}
         for fut in cf.as_completed(futs):
             r = fut.result()
             results.append(r)
@@ -261,17 +314,23 @@ def main() -> int:
     # waveforms for failing benches, for debugging from the CI artifact
     if args.waves == "on-failure":
         for r in results:
-            if r["status"] != "passed":
+            if r["status"] not in ("passed", "missing") and r["built"]:
                 tb = next(t for t in tbs if t["name"] == r["name"])
-                run_tb(args.ghdl, info["backend"], tb, work, generics_for(tb), std, out, wave=True)
+                run_tb(args.ghdl, info["backend"], tb, manifest, generics_for(tb), std, out, hw_dir, logisim,
+                       wave=True)
                 r["wave"] = f"waves/{r['name']}.ghw"
 
     for r in results:
-        if r["status"] != "passed":
+        r.pop("built", None)
+        if r["status"] == "missing":
+            annotate("notice" if not args.require_all else "error", f"{r['name']} missing", r["notes"][0])
+        elif r["status"] != "passed":
             first = r["failures"][0] if r["failures"] else r["status"]
             annotate("error", f"{r['name']} {r['status']}", first)
 
     passed = sum(r["status"] == "passed" for r in results)
+    missing = sum(r["status"] == "missing" for r in results)
+    failed = len(results) - passed - missing
     data = {
         "meta": {
             "project": "Sprout-8",
@@ -279,6 +338,7 @@ def main() -> int:
             "duration_s": round(time.monotonic() - t0, 1),
             "ghdl": info["version"], "backend": info["backend"],
             "profile": args.profile,
+            "design": manifest["design"]["logisim"],
             "commit": os.environ.get("GITHUB_SHA") or git("rev-parse", "HEAD"),
             "ref": os.environ.get("GITHUB_REF_NAME") or git("rev-parse", "--abbrev-ref", "HEAD"),
             "run_url": (f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/"
@@ -286,18 +346,18 @@ def main() -> int:
             "repository": os.environ.get("GITHUB_REPOSITORY", ""),
         },
         "totals": {
-            "testbenches": len(results), "passed": passed, "failed": len(results) - passed,
+            "testbenches": len(results), "passed": passed, "failed": failed, "missing": missing,
             "checks": sum(r["checks"] for r in results),
             "failed_checks": sum(r["failed_checks"] for r in results),
         },
         "testbenches": results,
     }
-    shutil.rmtree(work, ignore_errors=True)
+    shutil.rmtree(out / "work", ignore_errors=True)
     (out / "results.json").write_text(json.dumps(data, indent=2))
     write_junit(data, out / "junit.xml")
-    log(f"{passed}/{len(results)} testbenches passed, {data['totals']['checks']:,} checks "
-        f"in {data['meta']['duration_s']} s -> {out}")
-    return 0 if passed == len(results) else 1
+    log(f"{passed}/{len(results)} testbenches passed, {failed} failed, {missing} missing, "
+        f"{data['totals']['checks']:,} checks in {data['meta']['duration_s']} s -> {out}")
+    return 0 if failed == 0 and not (args.require_all and missing) else 1
 
 
 if __name__ == "__main__":

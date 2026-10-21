@@ -17,7 +17,8 @@ import json
 import os
 from pathlib import Path
 
-STATUS_ICON = {"passed": "✅", "failed": "❌", "error": "💥", "timeout": "⏱️"}
+STATUS_ICON = {"passed": "✅", "failed": "❌", "error": "💥", "timeout": "⏱️", "missing": "⬜"}
+NOT_FAILING = ("passed", "missing")   # "missing": the circuit is not in the Logisim project yet
 
 
 def load(d: Path) -> tuple[dict, dict | None]:
@@ -43,7 +44,8 @@ def markdown(res: dict, mut: dict | None) -> str:
     t, m = res["totals"], res["meta"]
     ok = t["failed"] == 0
     lines = [
-        f"## {'✅' if ok else '❌'} Sprout-8 testbenches: {t['passed']}/{t['testbenches']} passed",
+        f"## {'✅' if ok else '❌'} Sprout-8 testbenches: {t['passed']}/{t['testbenches']} passed"
+        + (f", {t['missing']} not built yet" if t.get("missing") else ""),
         "",
         f"**{t['checks']:,} checks** in {m['duration_s']} s · {m['ghdl']} ({m['backend']}) · profile `{m['profile']}`",
         "",
@@ -52,11 +54,11 @@ def markdown(res: dict, mut: dict | None) -> str:
     ]
     for tb in res["testbenches"]:
         notes = "; ".join(n for n in tb["notes"] if "sweep done" not in n)
-        if tb["status"] != "passed":
+        if tb["status"] not in NOT_FAILING:
             notes = f"**{tb['failed_checks']} failed** " + notes
         lines.append(f"| {STATUS_ICON.get(tb['status'], '?')} | `{tb['name']}` | {tb['unit']} | "
                      f"{tb['checks']:,} | {tb['duration_s']} s | {notes} |")
-    failing = [tb for tb in res["testbenches"] if tb["status"] != "passed"]
+    failing = [tb for tb in res["testbenches"] if tb["status"] not in NOT_FAILING]
     if failing:
         lines += ["", "### Failures", ""]
         for tb in failing:
@@ -108,6 +110,7 @@ tr:last-child td{border-bottom:0}td.num{text-align:right;font-variant-numeric:ta
 .pill{display:inline-block;border-radius:999px;padding:1px 10px;font-size:12px;font-weight:600}
 .pill.passed,.pill.killed{background:var(--okbg);color:var(--ok)}
 .pill.failed,.pill.error,.pill.timeout{background:var(--badbg);color:var(--bad)}
+.pill.missing{background:var(--line);color:var(--muted)}
 .pill.survived,.pill.invalid{background:var(--warnbg);color:var(--warn)}
 code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
 pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto;white-space:pre-wrap}
@@ -129,7 +132,8 @@ def html_report(res: dict, mut: dict | None) -> str:
     for tb in res["testbenches"]:
         notes = [n for n in tb["notes"] if "sweep done" not in n]
         gen = ", ".join(f"{k}={v}" for k, v in tb["generics"].items())
-        links = f'<a href="{e(tb["log"])}">log</a>' + (f' · <a href="{e(tb["wave"])}">wave</a>' if tb.get("wave") else "")
+        links = (f'<a href="{e(tb["log"])}">log</a>' if tb["log"] else "") + \
+            (f' · <a href="{e(tb["wave"])}">wave</a>' if tb.get("wave") else "")
         rows.append(
             f"<tr><td><span class='pill {e(tb['status'])}'>{e(tb['status'])}</span></td>"
             f"<td><code>{e(tb['name'])}</code></td><td>{e(tb['unit'])}</td>"
@@ -139,7 +143,7 @@ def html_report(res: dict, mut: dict | None) -> str:
             f"<td>{links}</td></tr>")
     failures = ""
     for tb in res["testbenches"]:
-        if tb["status"] != "passed":
+        if tb["status"] not in NOT_FAILING:
             failures += (f"<details open><summary><code>{e(tb['name'])}</code>: {tb['failed_checks']} failed checks"
                          f"</summary><pre>{e(chr(10).join(tb['failures'][:20]) or 'see log')}</pre></details>")
     mut_html = ""
@@ -150,7 +154,7 @@ def html_report(res: dict, mut: dict | None) -> str:
             f"<td>{e(x['description'])}</td><td><code>{e(x['file'])}</code></td>"
             f"<td>{e(', '.join(x['caught_by']))}</td></tr>" for x in mut["mutations"])
         mut_html = (f"<h2>Mutation check: {mt['killed']}/{mt['total']} planted bugs caught</h2>"
-                    f"<p class='muted'>Each row plants one bug in a copy of the RTL and reruns the testbenches. "
+                    f"<p class='muted'>Each row plants one bug in a copy of the Logisim design and reruns its testbench. "
                     f"A surviving mutation is a gap in the tests.</p>"
                     f"<div class='tablewrap'><table><thead><tr><th>Result</th><th>Mutation</th><th>File</th>"
                     f"<th>Caught by</th></tr></thead><tbody>{mrows}</tbody></table></div>")
@@ -167,8 +171,9 @@ def html_report(res: dict, mut: dict | None) -> str:
 <header>{LOGO}<div><h1>Sprout-8 test report</h1></div></header>
 <p class="meta">{e(m['started'])} · {e(m['ghdl'])} ({e(m['backend'])}) · profile <code>{e(m['profile'])}</code>
 · {e(m.get('ref', ''))} {commit_link}{run_link}</p>
-<div class="banner {'ok' if ok else 'bad'}">{'All testbenches passed.' if ok else
- f"{t['failed']} of {t['testbenches']} testbenches failed."}</div>
+<div class="banner {'ok' if ok else 'bad'}">{(f"{t['failed']} of {t['testbenches']} testbenches failed." if not ok
+ else "All testbenches passed." if not t.get('missing')
+ else f"All built testbenches passed. {t['missing']} of {t['testbenches']} wait for their circuit in the Logisim project.")}</div>
 <div class="cards">
 <div class="card"><div class="v {'ok' if ok else 'bad'}">{t['passed']}/{t['testbenches']}</div><div class="k">testbenches passed</div></div>
 <div class="card"><div class="v">{t['checks']:,}</div><div class="k">checks</div></div>
