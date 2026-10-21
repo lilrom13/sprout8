@@ -4,22 +4,27 @@ Running notes on the Logisim-evolution implementation in `sprout8.circ`: how it 
 
 ## Decisions
 
-- **2026-10-21: Logisim is the primary implementation.** `hw/logisim/sprout8.circ` is the design. It is verified by exporting it to VHDL and running the testbenches in `hw/tb/`. `hw/rtl/` keeps only `sprout8_pkg.vhd` (types shared by the testbenches); no hand-written reference RTL is planned. Consequences: CI, the manifest and `tools/mutation_check.py` must move from `hw/rtl/*.vhd` to the Logisim export; circuit changes are reviewed by running the tests, since `.circ` diffs are not readable.
+- **2026-10-21: Logisim is the primary implementation.** `hw/logisim/sprout8.circ` is the design. It is verified by exporting it to VHDL and running the testbenches in `hw/tb/`. `hw/rtl/` keeps only `sprout8_pkg.vhd` (types shared by the testbenches); no hand-written reference RTL is planned. Consequences, done the same day: the manifest names circuits instead of RTL files; `tools/run_tests.py` exports each testbench's circuits and reports a circuit not drawn yet as *missing* (not a failure; `--require-all`, used for releases, makes it one); `tools/mutation_check.py` plants bugs in the drawing; the workflows install Java 21 and the Logisim 5.0.0 jar (SHA-256 checked, same file as `/opt/logisim-evolution`) through `.github/actions/setup-logisim`. Circuit changes are reviewed by running the tests, since `.circ` diffs are not readable.
 
 ## Status
 
 | Module | Logisim | Logisim test vectors | VHDL export + testbench |
 | --- | --- | --- | --- |
-| `pc` | done | `pc.txt`: 1,042 rows pass | `tb_pc`: PASS (517 checks) |
+| `pc` | done | `pc.txt`: 1,042 rows pass | `tb_pc`: PASS (517 checks); mutations: 3/3 caught |
 | others | not started | | |
 
 ## Testing a circuit against the VHDL testbenches
 
 ```sh
-make logisim-tb TB=tb_pc          # = python3 tools/logisim2vhdl.py pc --test
+make test TB=tb_pc                # export, compile, run; the report goes to build/report/
+make vhdl C=pc                    # only the export, to build/logisim/vhdl/pc/
+make mutation                     # plant bugs in the drawing, check the testbenches catch them
 ```
 
-`tools/logisim2vhdl.py` exports the circuit with Logisim's own HDL generator, then compiles `hw/rtl/sprout8_pkg.vhd`, the testbench support packages, the generated VHDL and `hw/tb/tb_<circuit>.vhd` with GHDL, and runs the testbench. Generated files go to `build/logisim/vhdl/<circuit>/`, GHDL's work library to `build/logisim/ghdl-work/`.
+For each testbench, `tools/run_tests.py` exports the circuits listed for it in `hw/manifest.json` with `tools/logisim2vhdl.py`, then compiles `hw/rtl/sprout8_pkg.vhd`, the testbench support packages, the generated VHDL, the circuit's adapter if there is one, and the testbench, each testbench in its own GHDL work library (circuits exported separately share entity names such as `Adder`). The generated VHDL is kept in the report, under `build/report/vhdl/<testbench>/`.
+
+- **Adapters.** If `hw/logisim/adapters/<circuit>.vhd` exists, the generated entity is renamed `<circuit>_logisim` and the adapter, an entity named `<circuit>` with the testbench's interface, wraps it. Checked with a pass-through adapter for `pc`.
+- **Mutations** are generated from the drawing: every Constant (lowest bit flipped), gate (AND↔OR, NAND↔NOR, XOR→OR, XNOR→NOR), Adder↔Subtractor and Splitter (two bits crossed) of each tested circuit gives one mutant. `pc` gives 3; all 3 are caught by `tb_pc`.
 
 - **Headless export.** `logisim-evolution --test-fpga <circ> <circuit> <board> HDLONLY`. Logisim refuses to generate HDL until every pin is mapped to the FPGA board, even in HDL-only mode. The script adds a board map to a temporary copy of the project: inputs tied to constant 0 (`vconst`), outputs left open. This only affects Logisim's board wrapper (`toplevel/logisimTopLevelShell`), which the script discards. Format found in Logisim's `XmlReader.loadMap`: `<boardmap boardname="..."><mc key="/<pin label>" vconst="0"/>…`.
 - **No files outside the repository.** By default Logisim writes to `~/logisim_evolution_workspace/` and keeps preferences in `~/.java/`. The script runs it with `JAVA_TOOL_OPTIONS=-Duser.home=<tmp dir>`, so both go to a temporary directory that is deleted afterwards.

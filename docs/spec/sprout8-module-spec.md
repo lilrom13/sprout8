@@ -14,8 +14,8 @@ The ISA manual stays the source of truth for what software can observe. This vol
 | --- | --- |
 | Implements | Sprout-8 ISA v1.0 |
 | Document version | 1.0-draft |
-| Primary target | Logisim-evolution 3.9 or newer |
-| Secondary target | VHDL-2008 (`hw/rtl/`, analysed in the order of `hw/manifest.json`) |
+| Primary target | Logisim-evolution 3.9 or newer (CI uses 5.0.0); the design is `hw/logisim/sprout8.circ` |
+| Verification | VHDL-2008 testbenches (`hw/tb/`) run on the circuits exported to VHDL by Logisim |
 
 ## 1. Overview
 
@@ -93,7 +93,7 @@ These rules apply to every module unless its section says otherwise.
 
 ## 2. Shared definitions
 
-These constants are shared by all modules. In VHDL they live in `hw/rtl/sprout8_pkg.vhd`; in Logisim they are the values of Constant components and ROM contents.
+These constants are shared by all modules. In VHDL (the testbenches) they live in `hw/rtl/sprout8_pkg.vhd`; in Logisim they are the values of Constant components and ROM contents.
 
 ### 2.1 Reset values and port addresses
 

@@ -64,5 +64,6 @@ Each line is the state **after** the instruction at the address on the left. In 
 | `make logisim` | Program images and test vectors in `build/logisim/` |
 | `python3 tools/hex2logisim.py <prog.hex>` | One RAM image (`v3.0 hex words addressed`) |
 | `python3 tools/gen_logisim_vectors.py [module] [--exhaustive]` | Test vectors: `alu` (combinational), `pc` (sequential) |
-| `make logisim-tb TB=tb_<module>` | Exports the Logisim circuit to VHDL and runs its testbench with GHDL (see [`hw/logisim/NOTES.md`](../../hw/logisim/NOTES.md)) |
+| `make test TB=tb_<module>` | Exports the Logisim circuit to VHDL and runs its testbench with GHDL, as CI does (see [`hw/logisim/NOTES.md`](../../hw/logisim/NOTES.md)) |
+| `make vhdl C=<module>` | The VHDL Logisim generates for one circuit, in `build/logisim/vhdl/<module>/` |
 | `python3 sw/emulator/sprout8.py <prog.hex> --trace` | The expected state after every instruction |
