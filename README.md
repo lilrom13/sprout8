@@ -13,15 +13,19 @@
 
 Sprout-8 is a small 8-bit CPU designed for teaching: four registers, a 256-byte address
 space, sixteen opcodes and one fixed two-byte instruction format. This repository holds the
-ISA manual, a reference VHDL implementation, self-checking testbenches for every part, a
-Python emulator and the CI that ties them together.
+ISA manual, the CPU itself as a Logisim-evolution project, self-checking VHDL testbenches for
+every part, a Python emulator and the CI that ties them together. The Logisim drawing is the
+design: CI exports it to VHDL with Logisim's own generator and runs the testbenches on it.
 
 - **Spec:** [The Sprout-8 Instruction Set Manual](docs/spec/sprout8-isa-manual.md)
 - **Latest test report:** https://lilrom13.github.io/sprout8/
 
 ## Quick start
 
-Install [GHDL](https://github.com/ghdl/ghdl) (5.1.1 or newer) and Python 3.10+, then:
+Install [GHDL](https://github.com/ghdl/ghdl) (5.1.1 or newer),
+[Logisim-evolution](https://github.com/logisim-evolution/logisim-evolution) 5.0.0 and
+Python 3.10+. If Logisim is not on `PATH` or in `/opt/logisim-evolution`, set
+`LOGISIM=/path/to/logisim-evolution` (the launcher or the release `.jar`). Then:
 
 ```sh
 make ci                               # lint + emulator tests + all testbenches + report
@@ -32,16 +36,19 @@ python3 sw/emulator/sprout8.py sw/programs/b2_print_string.hex
 ## Repository layout
 
 ```
-docs/spec/            ISA manual (the source of truth)
+docs/spec/            ISA manual (the source of truth) and module specification
+docs/modules/         one guide per hardware module, for building it in Logisim
 docs/assets/          logo
-hw/rtl/               reference implementation, VHDL-2008
+hw/logisim/           the CPU: sprout8.circ (Logisim-evolution), VHDL adapters, NOTES.md
+hw/rtl/               sprout8_pkg.vhd, the VHDL types and constants the testbenches share
 hw/tb/                testbenches, golden model, test data
-hw/manifest.json      source order, testbench list, per-bench generics and profiles
+hw/manifest.json      the design, testbench list (each with the circuits it tests), generics, profiles
 sw/emulator/          Python instruction-set emulator + unit tests
 sw/programs/          example programs (.hex), loadable by the emulator and by mem_io INIT_FILE
-tools/run_tests.py    compile + run testbenches in parallel -> results.json, junit.xml, logs, waves
+tools/logisim2vhdl.py exports one Logisim circuit to VHDL (headless)
+tools/run_tests.py    export + compile + run testbenches in parallel -> results.json, junit.xml, logs, waves
 tools/report.py       results -> index.html, summary.md (CI job summary), badge.json
-tools/mutation_check.py  plants bugs in the RTL and checks the testbenches catch them
+tools/mutation_check.py  plants bugs in the Logisim drawing and checks the testbenches catch them
 .github/workflows/    CI, nightly stress, releases
 ```
 
@@ -50,8 +57,8 @@ tools/mutation_check.py  plants bugs in the RTL and checks the testbenches catch
 ```mermaid
 flowchart LR
   PR["push / pull request"] --> L["Lint<br/>GHDL -Wall --warn-error<br/>emulator tests<br/>actionlint"]
-  PR --> T["Testbenches<br/>GHDL v5.1.1 (blocking)<br/>GHDL latest (advisory)"]
-  T --> M["Mutation check<br/>18 planted bugs"]
+  PR --> X["Logisim 5.0.0<br/>export circuits to VHDL"] --> T["Testbenches<br/>GHDL v5.1.1 (blocking)<br/>GHDL latest (advisory)"]
+  T --> M["Mutation check<br/>bugs planted in the drawing"]
   M --> R["Report<br/>job summary · annotations<br/>JUnit · HTML · waves"]
   R -->|main only| P["GitHub Pages<br/>report + badge"]
   N["nightly 02:23 UTC"] --> S["Stress: 5,000 random programs<br/>new seed each night<br/>GHDL v5.1.1 + nightly"]
@@ -61,9 +68,9 @@ flowchart LR
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `ci.yml` | push to `main`, pull requests | Strict VHDL lint, emulator tests, workflow lint; all testbenches on the pinned and latest GHDL; mutation check; report as job summary, failure annotations, artifact (HTML, JUnit, logs, waveforms of failures); on `main`, deploys the report and badge to GitHub Pages |
+| `ci.yml` | push to `main`, pull requests | Strict VHDL lint, emulator tests, workflow lint; exports the Logisim design and runs every testbench whose circuit exists on the pinned and latest GHDL (circuits not drawn yet are reported as missing, not failed); mutation check; report as job summary, failure annotations, artifact (HTML, JUnit, logs, waveforms of failures); on `main`, deploys the report and badge to GitHub Pages |
 | `nightly.yml` | daily, manual | `tb_cpu` with 5,000 random programs and a new seed each night, on GHDL v5.1.1 and GHDL nightly; opens or updates an issue with the seed when it fails |
-| `release.yml` | tag `v*` | Full verification, then a GitHub Release with the source bundle, the test report and notes from `CHANGELOG.md` |
+| `release.yml` | tag `v*` | Full verification, which requires every circuit to exist, then a GitHub Release with the source bundle, the test report and notes from `CHANGELOG.md` |
 | `dependabot.yml` | weekly | Keeps the action versions current |
 
 One-time repository settings (Pages source, branch protection) are listed in
@@ -84,15 +91,24 @@ One-time repository settings (Pages source, branch protection) are listed in
 | `tb_control` | 11,911 | All 256 byte-0 values × all flag states: control word at every step vs. the spec 7.2 table, cycle counts, halt/illegal |
 | `tb_cpu` | 28,962 | Reset state, Appendix B programs with exact cycle counts, conformance tests C2–C16, halt quiescence, 300 random programs in lockstep with the golden model |
 
-The suite is itself tested: `tools/mutation_check.py` plants 18 realistic bugs and expects a
-testbench to fail for each one.
+The check counts are those of a complete CPU; a testbench whose circuit is not drawn yet
+shows as *missing* in the report.
 
-## Using the testbenches with your own CPU
+The suite is itself tested: `tools/mutation_check.py` plants small bugs in a copy of the
+Logisim drawing (a constant off by one, AND swapped for OR, an adder turned into a
+subtractor, two splitter bits crossed) and expects the circuit's testbench to fail for each
+one. The mutations are generated from the drawing, so they grow with the design.
 
-The testbenches test the entity interfaces of the reference design. Keep the entity names and
-ports below (or adapt the port maps), point `hw/manifest.json` at your files, and run
-`make test`. When `tb_cpu` diverges from the golden model it names the instruction and prints
-both states.
+## Testbench interfaces
+
+Each testbench instantiates an entity with the name of its circuit. Logisim's VHDL export
+names the entity after the circuit and each port after a pin label, so a circuit whose
+pins are labelled as below matches its testbench directly. When a testbench needs what a
+drawing cannot express (a generic, a record or array port), put a wrapper with the
+testbench's interface in `hw/logisim/adapters/<circuit>.vhd`: the runner then renames the
+generated entity to `<circuit>_logisim` for the wrapper to instantiate (see
+[`hw/logisim/NOTES.md`](hw/logisim/NOTES.md)). When `tb_cpu` diverges from the golden model
+it names the instruction and prints both states.
 
 | Entity | Ports |
 |---|---|
@@ -108,7 +124,8 @@ both states.
 | `cpu` | `clk, rst`, memory bus, `halted, illegal`, debug `dbg_*` incl. `dbg_retire` |
 
 Types are in `hw/rtl/sprout8_pkg.vhd`. Choices the spec leaves open (ALU codes, synchronous
-resets, INC/DEC via a forced B = 1, strobe timing) are documented at the top of each RTL file.
+resets, INC/DEC via a forced B = 1, strobe timing) are fixed in the
+[module specification](docs/spec/sprout8-module-spec.md).
 
 ## Contributing
 

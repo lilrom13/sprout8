@@ -1,0 +1,67 @@
+# Logisim implementation: working notes
+
+Running notes on the Logisim-evolution implementation in `sprout8.circ`: how it is tested, what was learned, and what is still open. Newest first within each section.
+
+## Decisions
+
+- **2026-10-21: Logisim is the primary implementation.** `hw/logisim/sprout8.circ` is the design. It is verified by exporting it to VHDL and running the testbenches in `hw/tb/`. `hw/rtl/` keeps only `sprout8_pkg.vhd` (types shared by the testbenches); no hand-written reference RTL is planned. Consequences, done the same day: the manifest names circuits instead of RTL files; `tools/run_tests.py` exports each testbench's circuits and reports a circuit not drawn yet as *missing* (not a failure; `--require-all`, used for releases, makes it one); `tools/mutation_check.py` plants bugs in the drawing; the workflows install Java 21 and the Logisim 5.0.0 jar (SHA-256 checked, same file as `/opt/logisim-evolution`) through `.github/actions/setup-logisim`. Circuit changes are reviewed by running the tests, since `.circ` diffs are not readable.
+
+## Status
+
+| Module | Logisim | Logisim test vectors | VHDL export + testbench |
+| --- | --- | --- | --- |
+| `pc` | done | `pc.txt`: 1,042 rows pass | `tb_pc`: PASS (517 checks); mutations: 3/3 caught |
+| others | not started | | |
+
+## Testing a circuit against the VHDL testbenches
+
+```sh
+make test TB=tb_pc                # export, compile, run; the report goes to build/report/
+make vhdl C=pc                    # only the export, to build/logisim/vhdl/pc/
+make mutation                     # plant bugs in the drawing, check the testbenches catch them
+```
+
+For each testbench, `tools/run_tests.py` exports the circuits listed for it in `hw/manifest.json` with `tools/logisim2vhdl.py`, then compiles `hw/rtl/sprout8_pkg.vhd`, the testbench support packages, the generated VHDL, the circuit's adapter if there is one, and the testbench, each testbench in its own GHDL work library (circuits exported separately share entity names such as `Adder`). The generated VHDL is kept in the report, under `build/report/vhdl/<testbench>/`.
+
+- **Adapters.** If `hw/logisim/adapters/<circuit>.vhd` exists, the generated entity is renamed `<circuit>_logisim` and the adapter, an entity named `<circuit>` with the testbench's interface, wraps it. Checked with a pass-through adapter for `pc`.
+- **Mutations** are generated from the drawing: every Constant (lowest bit flipped), gate (AND↔OR, NAND↔NOR, XOR→OR, XNOR→NOR), Adder↔Subtractor and Splitter (two bits crossed) of each tested circuit gives one mutant. `pc` gives 3; all 3 are caught by `tb_pc`.
+
+- **Headless export.** `logisim-evolution --test-fpga <circ> <circuit> <board> HDLONLY`. Logisim refuses to generate HDL until every pin is mapped to the FPGA board, even in HDL-only mode. The script adds a board map to a temporary copy of the project: inputs tied to constant 0 (`vconst`), outputs left open. This only affects Logisim's board wrapper (`toplevel/logisimTopLevelShell`), which the script discards. Format found in Logisim's `XmlReader.loadMap`: `<boardmap boardname="..."><mc key="/<pin label>" vconst="0"/>…`.
+- **No files outside the repository.** By default Logisim writes to `~/logisim_evolution_workspace/` and keeps preferences in `~/.java/`. The script runs it with `JAVA_TOOL_OPTIONS=-Duser.home=<tmp dir>`, so both go to a temporary directory that is deleted afterwards.
+- **The export is structural.** Each Logisim component becomes a component instance (`REGISTER_FLIP_FLOP`, `Adder`, `Multiplexer_bus_2`, `OR_GATE`…), so the testbench checks the drawing itself. Checked by planting a bug (incrementer constant 0x01 → 0x02): `tb_pc` failed with `increment 1: got 0x02, expected 0x01`.
+- **Port names come from the pin labels**, so a circuit whose pins follow the module specification matches its testbench without an adapter (true for `pc`).
+- **GHDL.** CI pins GHDL v5.1.1 (mcode). Installed locally, without root, from the official release `ghdl-mcode-5.1.1-ubuntu24.04-x86_64.tar.gz` into `~/.local/opt/ghdl-5.1.1/`. Use it with `GHDL=~/.local/opt/ghdl-5.1.1/ghdl-mcode-5.1.1-ubuntu24.04-x86_64/bin/ghdl`, or put its `bin/` on `PATH`. Ubuntu/Mint's `apt install ghdl` gives 4.1.0, older than CI.
+
+## Known risks and open points
+
+### Gated clock and delta-cycle skew (matters for `cpu`, not for single modules)
+
+Logisim warns: *Component "Register" in circuit "pc" has a gated clock connection!* The clock reaches the register through an input pin (`clk`), not from a Clock component, so the generated VHDL passes it through signal assignments: `s_logisimNet3 <= clk;` in the circuit, then `s_clock <= clock` inside `REGISTER_FLIP_FLOP`. Each assignment delays the clock edge by one delta cycle, and each level of subcircuit adds one more.
+
+Within one module every register sees the same delay, so this is harmless (`tb_pc` passes). In the full `cpu`, registers at different hierarchy depths would see the edge in different delta cycles. A register clocked later could sample a value that a register clocked earlier has already updated in the same edge: a race that exists only in simulation, not in the drawing.
+
+To check when `cpu` is exported. Possible fixes: drive the clock from a Clock component at the top so Logisim uses its clock tree (`logisimClockTree`, clock + tick enable) instead of gated clocks; or flatten the hierarchy for the export.
+
+### Testbenches whose ports do not map one-to-one
+
+The generated entity has one `std_logic` / `std_logic_vector` port per pin and no generics. Some testbenches expect more and will need a small VHDL adapter (a wrapper entity with the testbench's interface around the generated one):
+
+| Testbench | Expects | Logisim provides | Adapter |
+| --- | --- | --- | --- |
+| `tb_reg8` | generic `RESET_VALUE`, two instances (0x00, 0xA5) | no generics | wrapper; Logisim `reg8` needs an `rst_val` input (spec 3.3) for the 0xA5 instance |
+| `tb_regfile` | port `contents : regs_t` (array) | `q_a … q_d` | wrapper packing the four bytes |
+| `tb_control` | port `ctrl : ctrl_t` (record), `step : unsigned` | a 21-bit `ctrl` bus | wrapper decoding the bus into the record (spec 2.4 layout) |
+| `tb_mem_io` | generic `INIT_FILE` | RAM contents from the `.circ` | open: check how Logisim exports a RAM and its initial contents |
+| `tb_alu`, `tb_flags`, `tb_ir`, `tb_sp`, `tb_cpu` | plain ports | same | none expected |
+
+### Logisim-evolution facts checked in its source (5.0.0)
+
+- Test vectors: values without a `0x`/`0b` prefix are signed decimal unless the digit count equals the width; `<DC>` is don't care.
+- Sequential test vectors: rows with the same `<set>` keep state; `<seq>` starts at 1. Only Clock components are toggled automatically, so circuits clocked by a `clk` pin drive it from the vector, two rows per cycle.
+- `--load <image> <label>` loads only the RAM/ROM with that label; without a label, every RAM and ROM.
+- A headless `--tty` run stops when an output pin labelled exactly `halt` is 1.
+- The Adder has an HDL generator with no conditions. A "not supported for FPGA" message on it was not reproduced with 5.0.0.
+
+## Housekeeping log
+
+- 2026-10-21: removed `~/logisim_evolution_workspace/`, created by a manual test export before the script redirected Logisim's workspace.

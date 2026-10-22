@@ -1,7 +1,8 @@
 # CI: runs on every push to main and every pull request.
-#   lint     GHDL strict compile, emulator unit tests, workflow lint
-#   test     all testbenches on the pinned GHDL (blocking) and the latest GHDL (advisory),
-#            mutation check, HTML/Markdown report, JUnit XML, waveforms of failures
+#   lint     GHDL strict compile of the packages, emulator unit tests, workflow lint
+#   test     exports the Logisim design to VHDL and runs every testbench whose circuit
+#            exists, on the pinned GHDL (blocking) and the latest GHDL (advisory);
+#            circuits not drawn yet are reported as missing, not failed; mutation check, HTML/Markdown report, JUnit XML, waveforms of failures
 #   publish  on main: deploys the latest report to GitHub Pages (needs repo variable PAGES_ENABLED=true)
 name: CI
 
@@ -34,7 +35,7 @@ jobs:
           version: ${{ env.GHDL_VERSION }}
           backend: mcode
 
-      - name: VHDL strict compile (warnings are errors)
+      - name: VHDL strict compile of the packages (warnings are errors)
         run: make lint
 
       - name: Emulator unit tests
@@ -65,6 +66,8 @@ jobs:
         with:
           version: ${{ matrix.ghdl }}
           backend: mcode
+
+      - uses: ./.github/actions/setup-logisim
 
       - name: Run testbenches
         run: python3 tools/run_tests.py --out build/report

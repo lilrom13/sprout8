@@ -1,36 +1,30 @@
 {
-  "description": "Sprout-8 hardware sources and testbenches. Files are analysed in the order listed.",
+  "description": "Sprout-8 design and testbenches. The design is the Logisim project; each testbench names the circuit it tests, which is exported to VHDL (tools/logisim2vhdl.py) and compiled with the packages, the testbench support files and, if present, the circuit's adapter.",
   "vhdl_std": "08",
   "library": "work",
-  "rtl": [
-    "hw/rtl/sprout8_pkg.vhd",
-    "hw/rtl/alu.vhd",
-    "hw/rtl/regfile.vhd",
-    "hw/rtl/flags.vhd",
-    "hw/rtl/pc.vhd",
-    "hw/rtl/sp.vhd",
-    "hw/rtl/reg8.vhd",
-    "hw/rtl/ir.vhd",
-    "hw/rtl/mem_io.vhd",
-    "hw/rtl/control.vhd",
-    "hw/rtl/cpu.vhd"
+  "design": {
+    "logisim": "hw/logisim/sprout8.circ",
+    "adapters": "hw/logisim/adapters"
+  },
+  "packages": [
+    "hw/rtl/sprout8_pkg.vhd"
   ],
   "tb_support": [
     "hw/tb/tb_pkg.vhd",
     "hw/tb/sprout8_iss_pkg.vhd"
   ],
   "testbenches": [
-    { "name": "tb_alu",     "file": "hw/tb/tb_alu.vhd",     "unit": "ALU",              "timeout_s": 600 },
-    { "name": "tb_regfile", "file": "hw/tb/tb_regfile.vhd", "unit": "Register file",    "timeout_s": 120 },
-    { "name": "tb_flags",   "file": "hw/tb/tb_flags.vhd",   "unit": "Flags",            "timeout_s": 60 },
-    { "name": "tb_pc",      "file": "hw/tb/tb_pc.vhd",      "unit": "Program counter",  "timeout_s": 60 },
-    { "name": "tb_sp",      "file": "hw/tb/tb_sp.vhd",      "unit": "Stack pointer",    "timeout_s": 60 },
-    { "name": "tb_reg8",    "file": "hw/tb/tb_reg8.vhd",    "unit": "MAR (reg8)",       "timeout_s": 60 },
-    { "name": "tb_ir",      "file": "hw/tb/tb_ir.vhd",      "unit": "Instruction register", "timeout_s": 60 },
-    { "name": "tb_mem_io",  "file": "hw/tb/tb_mem_io.vhd",  "unit": "Memory and I/O",   "timeout_s": 120,
+    { "name": "tb_alu",     "file": "hw/tb/tb_alu.vhd",     "circuits": ["alu"],     "unit": "ALU",              "timeout_s": 600 },
+    { "name": "tb_regfile", "file": "hw/tb/tb_regfile.vhd", "circuits": ["regfile"], "unit": "Register file",    "timeout_s": 120 },
+    { "name": "tb_flags",   "file": "hw/tb/tb_flags.vhd",   "circuits": ["flags"],   "unit": "Flags",            "timeout_s": 60 },
+    { "name": "tb_pc",      "file": "hw/tb/tb_pc.vhd",      "circuits": ["pc"],      "unit": "Program counter",  "timeout_s": 60 },
+    { "name": "tb_sp",      "file": "hw/tb/tb_sp.vhd",      "circuits": ["sp"],      "unit": "Stack pointer",    "timeout_s": 60 },
+    { "name": "tb_reg8",    "file": "hw/tb/tb_reg8.vhd",    "circuits": ["reg8"],    "unit": "MAR (reg8)",       "timeout_s": 60 },
+    { "name": "tb_ir",      "file": "hw/tb/tb_ir.vhd",      "circuits": ["ir"],      "unit": "Instruction register", "timeout_s": 60 },
+    { "name": "tb_mem_io",  "file": "hw/tb/tb_mem_io.vhd",  "circuits": ["mem_io"],  "unit": "Memory and I/O",   "timeout_s": 120,
       "generics": { "INIT_FILE": "hw/tb/data/mem_init_test.hex" } },
-    { "name": "tb_control", "file": "hw/tb/tb_control.vhd", "unit": "Control unit",     "timeout_s": 300 },
-    { "name": "tb_cpu",     "file": "hw/tb/tb_cpu.vhd",     "unit": "Full CPU",         "timeout_s": 1800,
+    { "name": "tb_control", "file": "hw/tb/tb_control.vhd", "circuits": ["control"], "unit": "Control unit",     "timeout_s": 300 },
+    { "name": "tb_cpu",     "file": "hw/tb/tb_cpu.vhd",     "circuits": ["cpu", "mem_io"],     "unit": "Full CPU",         "timeout_s": 1800,
       "generics": { "N_RANDOM": 300, "RAND_SEED": 2026 },
       "profiles": { "nightly": { "generics": { "N_RANDOM": 5000 } } } }
   ]

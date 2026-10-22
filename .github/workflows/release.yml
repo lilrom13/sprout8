@@ -1,5 +1,5 @@
 # Release: pushing a tag such as v1.0.0 runs the full verification (nightly profile plus
-# the mutation check) and, only if everything passes, publishes a GitHub Release with
+# the mutation check, with every circuit required to exist in the Logisim project) and, only if everything passes, publishes a GitHub Release with
 # the source bundle and the test report attached.
 name: Release
 
@@ -23,12 +23,14 @@ jobs:
           version: v5.1.1
           backend: mcode
 
+      - uses: ./.github/actions/setup-logisim
+
       - name: Lint
         run: make lint emu-test
 
       - name: Full verification
         run: |
-          python3 tools/run_tests.py --profile nightly --out build/report
+          python3 tools/run_tests.py --profile nightly --require-all --out build/report
           python3 tools/mutation_check.py --out build/report
           python3 tools/report.py build/report --step-summary
 

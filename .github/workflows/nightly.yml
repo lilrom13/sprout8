@@ -40,6 +40,8 @@ jobs:
           version: ${{ matrix.ghdl }}
           backend: mcode
 
+      - uses: ./.github/actions/setup-logisim
+
       - name: Pick the random seed
         id: seed
         env:

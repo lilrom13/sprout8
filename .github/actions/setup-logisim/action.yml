@@ -1,0 +1,45 @@
+# Installs Java and the pinned Logisim-evolution release jar, verified by checksum, and
+# exports LOGISIM so tools/run_tests.py, tools/mutation_check.py and make find it.
+name: Set up Logisim-evolution
+description: Java plus the pinned Logisim-evolution jar, for headless VHDL export
+
+inputs:
+  version:
+    description: Logisim-evolution release
+    default: "5.0.0"
+  sha256:
+    description: SHA-256 of logisim-evolution-<version>-all.jar
+    default: 6b368e894742c04cc83aa9830f869bcab0190ede4df43ad6fecdb89b3a23a41c
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-java@v5
+      with:
+        distribution: temurin
+        java-version: "21"            # Logisim-evolution 5 is built for Java 21
+
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/logisim-evolution
+        key: logisim-evolution-${{ inputs.version }}-${{ inputs.sha256 }}
+
+    - name: Download Logisim-evolution ${{ inputs.version }}
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+      run: |
+        mkdir -p ~/.cache/logisim-evolution
+        jar=~/.cache/logisim-evolution/logisim-evolution-${VERSION}-all.jar
+        curl -sSfL -o "$jar" \
+          "https://github.com/logisim-evolution/logisim-evolution/releases/download/v${VERSION}/logisim-evolution-${VERSION}-all.jar"
+        echo "${SHA256}  ${jar}" | sha256sum -c -
+
+    - name: Export LOGISIM
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: echo "LOGISIM=$HOME/.cache/logisim-evolution/logisim-evolution-${VERSION}-all.jar" >> "$GITHUB_ENV"
