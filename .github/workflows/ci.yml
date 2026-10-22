@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: ghdl/setup-ghdl@v1
         with:
@@ -60,7 +60,7 @@ jobs:
           - ghdl: latest          # early warning when a new GHDL release changes behaviour
             primary: false
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: ghdl/setup-ghdl@v1
         with:
